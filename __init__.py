@@ -1,8 +1,16 @@
+import os
 import random
 
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, io
+from folder_paths import base_path
+
+
+def resolve_path(path):
+    if os.path.isabs(path):
+        return path
+    return os.path.join(base_path, path)
 
 
 def load_wildcard_lines(path):
@@ -41,7 +49,7 @@ class LoadWildcardFile(io.ComfyNode):
 
     @classmethod
     def execute(cls, file_path):
-        return io.NodeOutput(load_wildcard_lines(file_path))
+        return io.NodeOutput(load_wildcard_lines(resolve_path(file_path)))
 
 
 class RandomFromList(io.ComfyNode):

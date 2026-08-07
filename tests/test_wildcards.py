@@ -1,6 +1,26 @@
-import pytest
+import importlib.util
+import os
+from pathlib import Path
 
-from custom_nodes.my_wildcards import load_wildcard_lines, pick_random_line
+import pytest
+from folder_paths import base_path
+
+_IMPL = Path(__file__).resolve().parent.parent / "__init__.py"
+_spec = importlib.util.spec_from_file_location("comfy_bb_nodes", _IMPL)
+_impl = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_impl)
+
+load_wildcard_lines = _impl.load_wildcard_lines
+pick_random_line = _impl.pick_random_line
+resolve_path = _impl.resolve_path
+
+
+def test_resolve_path_absolute_unchanged():
+    assert resolve_path(r"E:\data\card.txt") == r"E:\data\card.txt"
+
+
+def test_resolve_path_relative_joins_base():
+    assert resolve_path("card.txt") == os.path.join(base_path, "card.txt")
 
 
 def test_load_wildcard_lines_reads_lines(tmp_path):
