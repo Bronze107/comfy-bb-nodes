@@ -4,13 +4,15 @@ import random
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, io
-from folder_paths import base_path
+from folder_paths import base_path, exists_annotated_filepath, get_annotated_filepath
 
 
 def resolve_path(path):
     if os.path.isabs(path):
         return path
-    return os.path.join(base_path, path)
+    if exists_annotated_filepath(path):
+        return get_annotated_filepath(path)
+    return get_annotated_filepath(path, base_path)
 
 
 def load_wildcard_lines(path):

@@ -19,8 +19,15 @@ def test_resolve_path_absolute_unchanged():
     assert resolve_path(r"E:\data\card.txt") == r"E:\data\card.txt"
 
 
-def test_resolve_path_relative_joins_base():
+def test_resolve_path_relative_falls_back_to_base():
     assert resolve_path("card.txt") == os.path.join(base_path, "card.txt")
+
+
+def test_resolve_path_relative_prefers_input(tmp_path, monkeypatch):
+    import folder_paths
+    monkeypatch.setattr(folder_paths, "input_directory", str(tmp_path))
+    (tmp_path / "card.txt").write_text("red\n", encoding="utf-8")
+    assert resolve_path("card.txt") == os.path.join(str(tmp_path), "card.txt")
 
 
 def test_load_wildcard_lines_reads_lines(tmp_path):
