@@ -1,5 +1,6 @@
 import os
 import random
+import re
 
 from typing_extensions import override
 
@@ -27,6 +28,21 @@ def pick_random_line(lines, seed):
     if not lines:
         raise ValueError("Cannot pick from an empty list")
     return random.Random(seed).choice(lines)
+
+
+def wildcard_replace(text, file_paths, seed):
+    rng = random.Random(seed)
+    lines = [load_wildcard_lines(resolve_path(p)) for p in file_paths]
+
+    def pick(match):
+        idx = int(match.group(1))
+        if idx < 1 or idx > len(lines):
+            raise ValueError(
+                f"Placeholder __{idx}__ has no matching file (only {len(lines)} file(s))"
+            )
+        return rng.choice(lines[idx - 1])
+
+    return re.sub(r"__(\d+)__", pick, text)
 
 
 class LoadWildcardFile(io.ComfyNode):
@@ -79,12 +95,43 @@ class RandomFromList(io.ComfyNode):
         return io.NodeOutput(pick_random_line(strings, seed[0]))
 
 
+class WildcardReplace(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        file_template = io.Autogrow.TemplatePrefix(
+            io.String.Input("file_path"),
+            prefix="file_path",
+            min=0,
+        )
+        return io.Schema(
+            node_id="WildcardReplace",
+            display_name="Wildcard Replace",
+            category="text",
+            description="Replace __1__, __2__, ... placeholders in the template with random lines from the corresponding files.",
+            inputs=[
+                io.String.Input("text", multiline=True, dynamic_prompts=True),
+                io.Autogrow.Input("file_paths", template=file_template),
+                io.Int.Input(
+                    "seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, tooltip="Random seed."
+                ),
+            ],
+            outputs=[
+                io.String.Output(),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, text, file_paths, seed):
+        return io.NodeOutput(wildcard_replace(text, list(file_paths.values()), seed))
+
+
 class WildcardExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
         return [
             LoadWildcardFile,
             RandomFromList,
+            WildcardReplace,
         ]
 
 
