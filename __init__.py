@@ -125,6 +125,28 @@ class WildcardReplace(io.ComfyNode):
         return io.NodeOutput(wildcard_replace(text, list(file_paths.values()), seed))
 
 
+class VideoInfo(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="VideoInfo",
+            display_name="Video Info",
+            category="video",
+            description="Get the duration and frame count of a video.",
+            inputs=[
+                io.Video.Input("video", tooltip="The video to inspect."),
+            ],
+            outputs=[
+                io.Float.Output(display_name="duration", tooltip="Duration in seconds."),
+                io.Int.Output(display_name="frame_count", tooltip="Total number of frames."),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, video):
+        return io.NodeOutput(video.get_duration(), video.get_frame_count())
+
+
 class WildcardExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
@@ -132,6 +154,7 @@ class WildcardExtension(ComfyExtension):
             LoadWildcardFile,
             RandomFromList,
             WildcardReplace,
+            VideoInfo,
         ]
 
 
