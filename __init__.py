@@ -1,11 +1,23 @@
+import json
 import os
 import random
 import re
+import shutil
+import subprocess
+import uuid
 
 from typing_extensions import override
 
-from comfy_api.latest import ComfyExtension, io
-from folder_paths import base_path, exists_annotated_filepath, get_annotated_filepath
+from comfy_api.input_impl import VideoFromFile
+from comfy_api.latest import ComfyExtension, io, Types
+from folder_paths import (
+    base_path,
+    exists_annotated_filepath,
+    get_annotated_filepath,
+    get_output_directory,
+    get_save_image_path,
+    get_temp_directory,
+)
 
 
 def resolve_path(path):
@@ -147,6 +159,215 @@ class VideoInfo(io.ComfyNode):
         return io.NodeOutput(video.get_duration(), video.get_frame_count())
 
 
+def _find_ffmpeg_tool(name):
+    exe = shutil.which(name)
+    if exe is None:
+        raise RuntimeError(
+            f"{name} not found on PATH. Install FFmpeg (ffmpeg + ffprobe) and add it to PATH."
+        )
+    return exe
+
+
+def _run_process(cmd):
+    kwargs = {"creationflags": 0x08000000} if os.name == "nt" else {}
+    result = subprocess.run(cmd, capture_output=True, text=True, errors="replace", **kwargs)
+    if result.returncode != 0:
+        raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{result.stderr[-2000:]}")
+    return result
+
+
+def _materialize_video(video, temp_dir):
+    """Return a real file path for a VIDEO input, writing a temp file when it is not already on disk."""
+    if isinstance(video, VideoFromFile):
+        source = video.get_stream_source()
+        if isinstance(source, (str, os.PathLike)):
+            return os.path.abspath(os.fspath(source)), False
+    path = os.path.join(temp_dir, f"concat_input_{uuid.uuid4().hex}.mp4")
+    video.save_to(path, format=Types.VideoContainer.MP4, codec=Types.VideoCodec.H264)
+    return path, True
+
+
+def _probe_video(path):
+    result = _run_process(
+        [_find_ffmpeg_tool("ffprobe"), "-v", "error", "-print_format", "json", "-show_streams", path]
+    )
+    streams = json.loads(result.stdout).get("streams", [])
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if video is None:
+        raise RuntimeError(f"No video stream found in {path}")
+    audio = [s for s in streams if s.get("codec_type") == "audio"]
+    return video, audio
+
+
+def _stream_signature(video, audio):
+    video_sig = (
+        video.get("codec_name"),
+        video.get("width"),
+        video.get("height"),
+        video.get("pix_fmt"),
+        video.get("avg_frame_rate"),
+    )
+    audio_sig = tuple(
+        (a.get("codec_name"), a.get("sample_rate"), a.get("channels")) for a in audio
+    )
+    return video_sig, audio_sig
+
+
+def _concat_list_line(path):
+    # The concat demuxer wants forward slashes; single quotes are backslash-escaped.
+    return "file '" + path.replace("\\", "/").replace("'", "\\'") + "'"
+
+
+def _write_concat_list(paths, temp_dir):
+    list_path = os.path.join(temp_dir, f"concat_list_{uuid.uuid4().hex}.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for path in paths:
+            f.write(_concat_list_line(path) + "\n")
+    return list_path
+
+
+def _output_path(filename_prefix, ref_video):
+    width = ref_video.get("width") or 1
+    height = ref_video.get("height") or 1
+    full_output_folder, filename, counter, subfolder, filename_prefix = get_save_image_path(
+        filename_prefix, get_output_directory(), width, height
+    )
+    return os.path.join(full_output_folder, f"{filename}_{counter:05}_.mp4")
+
+
+def _concat_stream_copy(paths, filename_prefix, ref_video, temp_dir):
+    list_path = _write_concat_list(paths, temp_dir)
+    out_path = _output_path(filename_prefix, ref_video)
+    try:
+        _run_process(
+            [
+                _find_ffmpeg_tool("ffmpeg"),
+                "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", list_path,
+                "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart",
+                out_path,
+            ]
+        )
+    finally:
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass
+    return out_path
+
+
+def _concat_reencode(paths, filename_prefix, probes, temp_dir):
+    ref_video, ref_audio = probes[0]
+    width = ref_video.get("width")
+    height = ref_video.get("height")
+    fps = ref_video.get("avg_frame_rate") or "30"
+    if not width or not height:
+        raise RuntimeError("Could not determine the reference video's dimensions.")
+
+    n = len(paths)
+    cmd = [_find_ffmpeg_tool("ffmpeg"), "-y"]
+    for path in paths:
+        cmd.extend(["-i", path])
+
+    filter_parts = []
+    video_labels = []
+    for i in range(n):
+        filter_parts.append(
+            f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps={fps},format=yuv420p,settb=AVTB[v{i}]"
+        )
+        video_labels.append(f"[v{i}]")
+
+    has_audio = all(len(audio) > 0 for _, audio in probes)
+    audio_labels = []
+    if has_audio:
+        ref_audio_stream = ref_audio[0]
+        sample_rate = ref_audio_stream.get("sample_rate") or 44100
+        layout = ref_audio_stream.get("channel_layout") or "stereo"
+        for i in range(n):
+            filter_parts.append(
+                f"[{i}:a]aresample={sample_rate},aformat=channel_layouts={layout}[a{i}]"
+            )
+            audio_labels.append(f"[a{i}]")
+
+    concat_inputs = "".join(video_labels + audio_labels)
+    filter_parts.append(
+        f"{concat_inputs}concat=n={n}:v=1:a={1 if has_audio else 0}[outv]"
+        + ("[outa]" if has_audio else "")
+    )
+    cmd.extend(["-filter_complex", ";".join(filter_parts), "-map", "[outv]"])
+    if has_audio:
+        cmd.extend(["-map", "[outa]", "-c:a", "aac"])
+    cmd.extend(
+        ["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
+    )
+
+    out_path = _output_path(filename_prefix, ref_video)
+    cmd.append(out_path)
+    _run_process(cmd)
+    return out_path
+
+
+class ConcatVideos(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        video_template = io.Autogrow.TemplatePrefix(
+            io.Video.Input("video"),
+            prefix="video",
+            min=2,
+            max=50,
+        )
+        return io.Schema(
+            node_id="ConcatVideos",
+            display_name="Concat Videos",
+            category="video",
+            search_aliases=["concatenate videos", "merge videos", "join videos", "splice videos"],
+            description="Concatenate multiple videos into one with FFmpeg. Uses lossless stream copy when all inputs share the same encoding, resolution, and frame rate; otherwise re-encodes to the first video's parameters.",
+            inputs=[
+                io.Autogrow.Input("videos", template=video_template),
+                io.String.Input(
+                    "filename_prefix",
+                    default="video/ConcatVideo",
+                    tooltip="Prefix for the output filename in the output directory.",
+                ),
+            ],
+            outputs=[
+                io.Video.Output(tooltip="Concatenated video."),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, videos: io.Autogrow.Type, filename_prefix):
+        videos = list(videos.values())
+        temp_dir = get_temp_directory()
+        paths = []
+        temp_paths = []
+        try:
+            for video in videos:
+                path, is_temp = _materialize_video(video, temp_dir)
+                paths.append(path)
+                if is_temp:
+                    temp_paths.append(path)
+
+            probes = [_probe_video(path) for path in paths]
+            signatures = [_stream_signature(video, audio) for video, audio in probes]
+            if len(set(signatures)) == 1:
+                out_path = _concat_stream_copy(paths, filename_prefix, probes[0][0], temp_dir)
+            else:
+                out_path = _concat_reencode(paths, filename_prefix, probes, temp_dir)
+            return io.NodeOutput(VideoFromFile(out_path))
+        finally:
+            for path in temp_paths:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
 class WildcardExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
@@ -155,6 +376,7 @@ class WildcardExtension(ComfyExtension):
             RandomFromList,
             WildcardReplace,
             VideoInfo,
+            ConcatVideos,
         ]
 
 
