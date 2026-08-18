@@ -9,7 +9,7 @@ import uuid
 from typing_extensions import override
 
 from comfy_api.input_impl import VideoFromFile
-from comfy_api.latest import ComfyExtension, io, Types
+from comfy_api.latest import ComfyExtension, io, Types, ui
 from folder_paths import (
     base_path,
     exists_annotated_filepath,
@@ -232,12 +232,13 @@ def _output_path(filename_prefix, ref_video):
     full_output_folder, filename, counter, subfolder, filename_prefix = get_save_image_path(
         filename_prefix, get_output_directory(), width, height
     )
-    return os.path.join(full_output_folder, f"{filename}_{counter:05}_.mp4")
+    file = f"{filename}_{counter:05}_.mp4"
+    return os.path.join(full_output_folder, file), file, subfolder
 
 
 def _concat_stream_copy(paths, filename_prefix, ref_video, temp_dir):
     list_path = _write_concat_list(paths, temp_dir)
-    out_path = _output_path(filename_prefix, ref_video)
+    out_path, file, subfolder = _output_path(filename_prefix, ref_video)
     try:
         _run_process(
             [
@@ -257,7 +258,7 @@ def _concat_stream_copy(paths, filename_prefix, ref_video, temp_dir):
             os.remove(list_path)
         except OSError:
             pass
-    return out_path
+    return out_path, file, subfolder
 
 
 def _concat_reencode(paths, filename_prefix, probes, temp_dir):
@@ -306,10 +307,10 @@ def _concat_reencode(paths, filename_prefix, probes, temp_dir):
         ["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]
     )
 
-    out_path = _output_path(filename_prefix, ref_video)
+    out_path, file, subfolder = _output_path(filename_prefix, ref_video)
     cmd.append(out_path)
     _run_process(cmd)
-    return out_path
+    return out_path, file, subfolder
 
 
 class ConcatVideos(io.ComfyNode):
@@ -327,6 +328,7 @@ class ConcatVideos(io.ComfyNode):
             category="video",
             search_aliases=["concatenate videos", "merge videos", "join videos", "splice videos"],
             description="Concatenate multiple videos into one with FFmpeg. Uses lossless stream copy when all inputs share the same encoding, resolution, and frame rate; otherwise re-encodes to the first video's parameters.",
+            is_output_node=True,
             inputs=[
                 io.Autogrow.Input("videos", template=video_template),
                 io.String.Input(
@@ -356,10 +358,13 @@ class ConcatVideos(io.ComfyNode):
             probes = [_probe_video(path) for path in paths]
             signatures = [_stream_signature(video, audio) for video, audio in probes]
             if len(set(signatures)) == 1:
-                out_path = _concat_stream_copy(paths, filename_prefix, probes[0][0], temp_dir)
+                out_path, file, subfolder = _concat_stream_copy(paths, filename_prefix, probes[0][0], temp_dir)
             else:
-                out_path = _concat_reencode(paths, filename_prefix, probes, temp_dir)
-            return io.NodeOutput(VideoFromFile(out_path))
+                out_path, file, subfolder = _concat_reencode(paths, filename_prefix, probes, temp_dir)
+            return io.NodeOutput(
+                VideoFromFile(out_path),
+                ui=ui.PreviewVideo([ui.SavedResult(file, subfolder, io.FolderType.output)]),
+            )
         finally:
             for path in temp_paths:
                 try:
