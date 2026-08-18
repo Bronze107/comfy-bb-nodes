@@ -373,6 +373,71 @@ class ConcatVideos(io.ComfyNode):
                     pass
 
 
+class ResampleFPS(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="ResampleFPS",
+            display_name="Resample FPS",
+            category="video",
+            search_aliases=["adjust fps", "change frame rate", "convert fps", "set fps"],
+            description="Re-encode a video to a new frame rate with FFmpeg's fps filter, which duplicates or drops frames while keeping the duration.",
+            is_output_node=True,
+            inputs=[
+                io.Video.Input("video", tooltip="The video to resample."),
+                io.Float.Input(
+                    "fps",
+                    default=24.0,
+                    min=0.01,
+                    max=240.0,
+                    step=0.01,
+                    tooltip="Target frame rate in frames per second.",
+                ),
+                io.String.Input(
+                    "filename_prefix",
+                    default="video/ResampleFPS",
+                    tooltip="Prefix for the output filename in the output directory.",
+                ),
+            ],
+            outputs=[
+                io.Video.Output(),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, video, fps, filename_prefix):
+        temp_dir = get_temp_directory()
+        path, is_temp = _materialize_video(video, temp_dir)
+        temp_paths = [path] if is_temp else []
+        try:
+            ref_video, audio = _probe_video(path)
+            out_path, file, subfolder = _output_path(filename_prefix, ref_video)
+            cmd = [
+                _find_ffmpeg_tool("ffmpeg"),
+                "-y",
+                "-i", path,
+                "-vf", f"fps={fps:g}",
+                "-c:v", "libx264",
+                "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+            ]
+            if audio:
+                cmd.extend(["-c:a", "aac"])
+            cmd.append(out_path)
+            _run_process(cmd)
+            return io.NodeOutput(
+                VideoFromFile(out_path),
+                ui=ui.PreviewVideo([ui.SavedResult(file, subfolder, io.FolderType.output)]),
+            )
+        finally:
+            for path in temp_paths:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
 class WildcardExtension(ComfyExtension):
     @override
     async def get_node_list(self) -> list[type[io.ComfyNode]]:
@@ -382,6 +447,7 @@ class WildcardExtension(ComfyExtension):
             WildcardReplace,
             VideoInfo,
             ConcatVideos,
+            ResampleFPS,
         ]
 
 
