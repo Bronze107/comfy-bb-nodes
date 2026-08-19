@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from folder_paths import base_path
 
-_IMPL = Path(__file__).resolve().parent.parent / "__init__.py"
-_spec = importlib.util.spec_from_file_location("comfy_bb_nodes", _IMPL)
+_IMPL = Path(__file__).resolve().parent.parent / "text_nodes.py"
+_spec = importlib.util.spec_from_file_location("comfy_bb_text_nodes", _IMPL)
 _impl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_impl)
 

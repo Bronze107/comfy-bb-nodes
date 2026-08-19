@@ -7,8 +7,8 @@ import torch
 from comfy_api.input_impl.video_types import VideoFromComponents
 from comfy_api.util.video_types import VideoComponents
 
-_IMPL = Path(__file__).resolve().parent.parent / "__init__.py"
-_spec = importlib.util.spec_from_file_location("comfy_bb_nodes", _IMPL)
+_IMPL = Path(__file__).resolve().parent.parent / "video_nodes.py"
+_spec = importlib.util.spec_from_file_location("comfy_bb_video_nodes", _IMPL)
 _impl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_impl)
 

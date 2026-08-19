@@ -35,26 +35,33 @@ comfy-bb-nodes/
   `io`, `ui`, `Types`, `folder_paths` output/temp helpers
 
 **`__init__.py`** — becomes the entry point only:
-- Relative imports of the 6 node classes from the two submodules
+- Imports the 6 node classes from the two submodules via `sys.path` insertion +
+  absolute imports (see constraint below)
 - `class BBExtension(ComfyExtension)` with `get_node_list` returning all 6 nodes
   (renamed from `WildcardExtension`, which no longer reflects the content)
 - `comfy_entrypoint()` returns `BBExtension()`
-- Imports: `typing_extensions.override`, `ComfyExtension`, `io`
+- Imports: `os`, `sys`, `typing_extensions.override`, `ComfyExtension`, `io`
 
 ## Import mechanism constraint (verified empirically)
 
 ComfyUI's `load_custom_node` (nodes.py:2258) loads a directory custom node with
 `importlib.util.spec_from_file_location` on `__init__.py`, registering the module
-in `sys.modules` before `exec_module`. This makes relative imports from
-`__init__.py` work.
+in `sys.modules` before `exec_module`. Relative imports would work there, but the
+directory name `comfy-bb-nodes` is not a valid Python module name (hyphens), so
+pytest collects the directory as `<Package comfy-bb-nodes>` and imports
+`__init__.py` as a top-level module with an empty `__package__` — which breaks
+relative imports during test runs.
 
-The existing tests load `__init__.py` the same way but WITHOUT the `sys.modules`
-registration, so relative imports fail there. The submodule files
-(`text_nodes.py`, `video_nodes.py`) have no relative imports, so tests load them
-directly instead.
+The working approach: `__init__.py` inserts its own directory at the front of
+`sys.path` and imports the sibling modules with absolute imports. This works both
+under ComfyUI's loader and under pytest (any collection mode).
 
-Verified with a minimal reproduction under `python_embeded/python.exe` (3.13.11):
-ComfyUI-style load passes; test-style load fails on relative import.
+The submodule files (`text_nodes.py`, `video_nodes.py`) have no relative imports,
+so tests load them directly.
+
+Verified under `python_embeded/python.exe` (3.13.11): plain
+`pytest custom_nodes/comfy-bb-nodes/tests` passes, and a replica of ComfyUI's
+`load_custom_node` directory-loading imports all 6 nodes without error.
 
 ## Test changes
 
