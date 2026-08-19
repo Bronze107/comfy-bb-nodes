@@ -10,7 +10,7 @@ from comfy_api.latest import ComfyExtension, io
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
-from video_nodes import VideoInfo, ConcatVideos, ResampleFPS
+from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
 
 
 class BBExtension(ComfyExtension):
@@ -23,6 +23,7 @@ class BBExtension(ComfyExtension):
             VideoInfo,
             ConcatVideos,
             ResampleFPS,
+            SplitVideoByFrames,
         ]
 
 

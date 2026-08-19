@@ -312,3 +312,47 @@ class ResampleFPS(io.ComfyNode):
                     os.remove(path)
                 except OSError:
                     pass
+
+
+class SplitVideoByFrames(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="SplitVideoByFrames",
+            display_name="Split Video by Frames",
+            category="video",
+            search_aliases=["split video by frames", "frame segments", "cut video into segments"],
+            description="Split a video into segments of N frames each. The last segment may be shorter. Segments are lazy trim windows over the source, so nothing is re-encoded or written until saved.",
+            inputs=[
+                io.Video.Input("video", tooltip="The video to split."),
+                io.Int.Input(
+                    "frames_per_segment",
+                    default=30,
+                    min=1,
+                    tooltip="Number of frames in each segment.",
+                ),
+            ],
+            outputs=[
+                io.Video.Output(display_name="segments", is_output_list=True),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, video, frames_per_segment):
+        frame_count = video.get_frame_count()
+        if frame_count == 0:
+            raise ValueError("Cannot split a video with no frames.")
+        fps = video.get_frame_rate()
+        total_duration = float(video.get_duration())
+        segments = []
+        for start in range(0, frame_count, frames_per_segment):
+            start_time = float(start / fps)
+            remaining = frame_count - start
+            if remaining <= frames_per_segment:
+                duration = total_duration - start_time
+            else:
+                duration = float(frames_per_segment / fps)
+            segment = video.as_trimmed(start_time, duration, strict_duration=False)
+            if segment is not None:
+                segments.append(segment)
+        return io.NodeOutput(segments)
