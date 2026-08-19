@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -254,20 +255,27 @@ class ResampleFPS(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="ResampleFPS",
-            display_name="Resample FPS",
+            display_name="Resample Video",
             category="video",
-            search_aliases=["adjust fps", "change frame rate", "convert fps", "set fps"],
-            description="Re-encode a video to a new frame rate with FFmpeg's fps filter, which duplicates or drops frames while keeping the duration.",
+            search_aliases=["adjust fps", "change frame rate", "convert fps", "set fps", "resize", "scale resolution", "adjust resolution"],
+            description="Re-encode a video to a new frame rate and/or scale it to a target megapixel count. fps 0 keeps the source frame rate; megapixels 0 keeps the source resolution. Scaling preserves aspect ratio and never upscales.",
             is_output_node=True,
             inputs=[
-                io.Video.Input("video", tooltip="The video to resample."),
+                io.Video.Input("video", tooltip="The video to resample or resize."),
                 io.Float.Input(
                     "fps",
                     default=24.0,
-                    min=0.01,
+                    min=0.0,
                     max=240.0,
                     step=0.01,
-                    tooltip="Target frame rate in frames per second.",
+                    tooltip="Target frame rate in frames per second, or 0 to keep the source frame rate.",
+                ),
+                io.Float.Input(
+                    "megapixels",
+                    default=2.0,
+                    min=0.0,
+                    step=0.1,
+                    tooltip="Target size in megapixels, or 0 to keep the source resolution. Aspect ratio is preserved and the video is never upscaled.",
                 ),
                 io.String.Input(
                     "filename_prefix",
@@ -281,23 +289,43 @@ class ResampleFPS(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, video, fps, filename_prefix):
+    def execute(cls, video, fps, megapixels, filename_prefix):
         temp_dir = get_temp_directory()
         path, is_temp = _materialize_video(video, temp_dir)
         temp_paths = [path] if is_temp else []
         try:
             ref_video, audio = _probe_video(path)
+            if fps <= 0 and megapixels <= 0:
+                raise ValueError("Set fps > 0 or megapixels > 0 to change the video.")
+            vf = []
+            if fps > 0:
+                vf.append(f"fps={fps:g}")
+            if megapixels > 0:
+                width = ref_video.get("width")
+                height = ref_video.get("height")
+                if not width or not height:
+                    raise RuntimeError("Could not determine the source video's dimensions.")
+                factor = math.sqrt((megapixels * 1_000_000) / (width * height))
+                if factor < 1.0:
+                    new_w = round(width * factor) - (round(width * factor) % 2)
+                    new_h = round(height * factor) - (round(height * factor) % 2)
+                    vf.append(f"scale={new_w}:{new_h}:flags=lanczos")
             out_path, file, subfolder = _output_path(filename_prefix, ref_video)
             cmd = [
                 _find_ffmpeg_tool("ffmpeg"),
                 "-y",
                 "-i", path,
-                "-vf", f"fps={fps:g}",
-                "-c:v", "libx264",
-                "-crf", "18",
-                "-pix_fmt", "yuv420p",
-                "-movflags", "+faststart",
             ]
+            if vf:
+                cmd.extend(["-vf", ",".join(vf)])
+            cmd.extend(
+                [
+                    "-c:v", "libx264",
+                    "-crf", "18",
+                    "-pix_fmt", "yuv420p",
+                    "-movflags", "+faststart",
+                ]
+            )
             if audio:
                 cmd.extend(["-c:a", "aac"])
             cmd.append(out_path)
