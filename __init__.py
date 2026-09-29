@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
 from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
+from image_nodes import ScaleImageToTotalPixelsCoverCrop
 
 
 class BBExtension(ComfyExtension):
@@ -24,6 +25,7 @@ class BBExtension(ComfyExtension):
             ConcatVideos,
             ResampleFPS,
             SplitVideoByFrames,
+            ScaleImageToTotalPixelsCoverCrop,
         ]
 
 
