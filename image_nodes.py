@@ -3,7 +3,15 @@ import math
 import torch
 
 import comfy.utils
+import node_helpers
 from comfy_api.latest import io
+
+
+def resize_mask(mask, height, width):
+    # a mask can arrive at a different resolution than the image; put it on the image grid
+    if mask.shape[-2:] == (height, width):
+        return mask
+    return torch.nn.functional.interpolate(mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1])), size=(height, width), mode="bilinear").reshape(mask.shape[0], height, width)
 
 
 def masked_region_box(mask, padding, height, width):
@@ -47,7 +55,8 @@ class MaskedInpaintCrop(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, mask, padding, resolution) -> io.NodeOutput:
-        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[2], image.shape[1])
+        mask = resize_mask(mask, image.shape[1], image.shape[2])
+        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2])
         crop = image[:, y0:y1, x0:x1, :]
         crop_mask = mask[:, y0:y1, x0:x1]
         height, width = crop.shape[1:3]
@@ -56,7 +65,7 @@ class MaskedInpaintCrop(io.ComfyNode):
             width = max(round(width * scale / 8) * 8, 64)
             height = max(round(height * scale / 8) * 8, 64)
             crop = comfy.utils.common_upscale(crop.movedim(-1, 1), width, height, "lanczos", "disabled").movedim(1, -1)
-            crop_mask = torch.nn.functional.interpolate(crop_mask.reshape((-1, 1, crop_mask.shape[-2], crop_mask.shape[-1])), size=(height, width), mode="bilinear").reshape(mask.shape[0], height, width)
+            crop_mask = resize_mask(crop_mask, height, width)
         return io.NodeOutput(crop, crop_mask)
 
 
@@ -83,7 +92,9 @@ class MaskedInpaintPaste(io.ComfyNode):
 
     @classmethod
     def execute(cls, image, mask, inpainted, padding) -> io.NodeOutput:
-        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[2], image.shape[1])
+        mask = resize_mask(mask, image.shape[1], image.shape[2])
+        image, inpainted = node_helpers.image_alpha_fix(image, inpainted)
+        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2])
         region = comfy.utils.common_upscale(inpainted.movedim(-1, 1), x1 - x0, y1 - y0, "lanczos", "disabled").movedim(1, -1)
         m = mask[:, y0:y1, x0:x1].unsqueeze(-1)
         out = image.clone()

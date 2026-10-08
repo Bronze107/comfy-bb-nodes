@@ -36,6 +36,12 @@ def test_box_clamped_at_image_edges():
     assert box == (0, 0, 48, 48)
 
 
+def test_box_clamps_x_by_width_and_y_by_height_on_non_square_images():
+    # portrait 960x952: x must stay inside the 952px width, not the 960px height
+    box = masked_region_box(blob_mask(960, 952, 200, 800, 400, 948), 32, 960, 952)
+    assert box == (368, 168, 952, 832)
+
+
 def test_soft_and_empty_masks_raise():
     # 0.4 stays below the 0.5 threshold, so this mask is treated as empty
     with pytest.raises(ValueError):
@@ -87,6 +93,52 @@ def test_paste_resizes_inpainted_back_to_box():
     out = MaskedInpaintPaste.execute(image, mask, inpainted, 32)[0]
     assert out.shape == image.shape
     assert torch.all(out[:, 250, 150] == 1.0)
+
+
+def test_crop_resamples_mask_to_image_size():
+    image = torch.rand(1, 128, 128, 3)
+    mask = torch.ones(1, 64, 64)  # half resolution, covers the same frame
+    out_image, out_mask = crop(image, mask, padding=0)
+    assert out_image.shape == (1, 128, 128, 3)
+    assert out_mask.shape == (1, 128, 128)
+
+
+def test_paste_resamples_mask_to_image_size():
+    image = torch.zeros(1, 128, 128, 3)
+    mask = torch.ones(1, 64, 64)
+    out = MaskedInpaintPaste.execute(image, mask, torch.ones(1, 128, 128, 3), 32)[0]
+    assert out.shape == image.shape
+    assert torch.all(out == 1.0)  # full-frame mask covers the whole image
+
+
+def test_paste_composites_on_non_square_image():
+    image = torch.zeros(1, 960, 952, 3)
+    mask = blob_mask(960, 952, 200, 800, 400, 948)
+    inpainted = torch.ones(1, 664, 584, 3)  # box is 584x664
+    out = MaskedInpaintPaste.execute(image, mask, inpainted, 32)[0]
+    assert out.shape == image.shape
+    assert torch.all(out[:, 500, 700] == 1.0)  # inside the mask
+    assert torch.all(out[:, 100, 100] == 0.0)  # outside the box, untouched
+
+
+def test_paste_makes_inpainted_opaque_on_an_alpha_image():
+    image = torch.zeros(1, 128, 128, 4)
+    image[..., 3] = 0.5
+    mask = blob_mask(128, 128, 32, 96, 32, 96)
+    inpainted = torch.ones(1, 128, 128, 3)  # VAE decode output is RGB
+    out = MaskedInpaintPaste.execute(image, mask, inpainted, 0)[0]
+    assert out.shape == image.shape
+    assert torch.all(out[:, 64, 64] == 1.0)  # pasted rgb, alpha forced opaque
+    assert torch.all(out[:, 10, 10] == torch.tensor([0.0, 0.0, 0.0, 0.5]))  # outside untouched
+
+
+def test_paste_drops_alpha_from_inpainted():
+    image = torch.zeros(1, 128, 128, 3)
+    mask = blob_mask(128, 128, 32, 96, 32, 96)
+    inpainted = torch.ones(1, 128, 128, 4)
+    out = MaskedInpaintPaste.execute(image, mask, inpainted, 0)[0]
+    assert out.shape == image.shape
+    assert torch.all(out[:, 64, 64] == 1.0)
 
 
 def test_full_mask_pastes_everything():
