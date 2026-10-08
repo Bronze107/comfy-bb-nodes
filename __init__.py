@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
 from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
-from image_nodes import ScaleImageToTotalPixelsCoverCrop
+from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, MaskedInpaintPaste
 from qwen_nodes import TextEncodeQwenImage21Latent
 
 
@@ -27,6 +27,8 @@ class BBExtension(ComfyExtension):
             ResampleFPS,
             SplitVideoByFrames,
             ScaleImageToTotalPixelsCoverCrop,
+            MaskedInpaintCrop,
+            MaskedInpaintPaste,
             TextEncodeQwenImage21Latent,
         ]
 
