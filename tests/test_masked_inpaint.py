@@ -20,8 +20,8 @@ def blob_mask(height, width, y0, y1, x0, x1, value=1.0):
     return m
 
 
-def crop(image, mask, padding=32, resolution=0):
-    return MaskedInpaintCrop.execute(image, mask, padding, resolution)
+def crop(image, mask, padding=32, megapixels=0):
+    return MaskedInpaintCrop.execute(image, mask, padding, megapixels)
 
 
 def test_box_grown_by_padding_and_aligned_to_8():
@@ -34,6 +34,12 @@ def test_box_clamped_at_image_edges():
     # mask bbox [0:10, 0:10] + 32 padding ends at 42, rounds up to the 48px VAE stride
     box = masked_region_box(blob_mask(64, 64, 0, 10, 0, 10), 32, 64, 64)
     assert box == (0, 0, 48, 48)
+
+
+def test_box_aligns_to_32_for_qwen_2_1():
+    # Qwen-Image 2.1 VAE stride: [200:300, 100:260] + 32 padding on a 512x512 frame
+    box = masked_region_box(blob_mask(512, 512, 200, 300, 100, 260), 32, 512, 512, alignment=32)
+    assert box == (64, 160, 320, 352)
 
 
 def test_box_clamps_x_by_width_and_y_by_height_on_non_square_images():
@@ -59,16 +65,16 @@ def test_crop_slices_image_and_mask():
     assert torch.equal(out_mask, mask[:, 168:336, 64:296])
 
 
-def test_crop_scales_long_side_to_resolution():
+def test_crop_scales_to_megapixels():
     image = torch.rand(1, 512, 512, 3)
     mask = blob_mask(512, 512, 200, 300, 100, 260)
-    out_image, out_mask = crop(image, mask, resolution=512)
-    # crop is 232x168, long side 232 -> 512; 168 * 512/232 rounds to 368
-    assert out_image.shape == (1, 368, 512, 3)
-    assert out_mask.shape == (1, 368, 512)
+    out_image, out_mask = crop(image, mask, megapixels=1.0)
+    # crop is 232x168; sqrt(1048576 / (232*168)) then 8px alignment gives 1200x872
+    assert out_image.shape == (1, 872, 1200, 3)
+    assert out_mask.shape == (1, 872, 1200)
 
 
-def test_crop_keeps_size_at_resolution_zero():
+def test_crop_keeps_size_at_zero_megapixels():
     image = torch.rand(1, 512, 512, 3)
     mask = blob_mask(512, 512, 200, 300, 100, 260)
     out_image, _ = crop(image, mask)
@@ -88,7 +94,7 @@ def test_paste_composites_through_mask():
 def test_paste_resizes_inpainted_back_to_box():
     image = torch.zeros(1, 512, 512, 3)
     mask = blob_mask(512, 512, 200, 300, 100, 260)
-    # crop node with resolution=512 produces a 368x512 result
+    # any scaled-up inpaint result gets resized back to the box
     inpainted = torch.ones(1, 368, 512, 3)
     out = MaskedInpaintPaste.execute(image, mask, inpainted, 32)[0]
     assert out.shape == image.shape

@@ -14,8 +14,8 @@ def resize_mask(mask, height, width):
     return torch.nn.functional.interpolate(mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1])), size=(height, width), mode="bilinear").reshape(mask.shape[0], height, width)
 
 
-def masked_region_box(mask, padding, height, width):
-    # WebUI "only masked" box: mask bounding box grown by padding, aligned to the 8px VAE stride
+def masked_region_box(mask, padding, height, width, alignment=8):
+    # WebUI "only masked" box: mask bounding box grown by padding, aligned to the VAE stride
     m = mask.amax(dim=0) if mask.dim() == 3 else mask
     rows, cols = torch.where(m > 0.5)
     if rows.numel() == 0:
@@ -24,8 +24,8 @@ def masked_region_box(mask, padding, height, width):
     y0 = max(int(rows.min()) - padding, 0)
     x1 = min(int(cols.max()) + 1 + padding, width)
     y1 = min(int(rows.max()) + 1 + padding, height)
-    x0, x1 = (x0 // 8) * 8, min(math.ceil(x1 / 8) * 8, width)
-    y0, y1 = (y0 // 8) * 8, min(math.ceil(y1 / 8) * 8, height)
+    x0, x1 = (x0 // alignment) * alignment, min(math.ceil(x1 / alignment) * alignment, width)
+    y0, y1 = (y0 // alignment) * alignment, min(math.ceil(y1 / alignment) * alignment, height)
     return x0, y0, x1, y1
 
 
@@ -44,8 +44,10 @@ class MaskedInpaintCrop(io.ComfyNode):
                 io.Mask.Input("mask"),
                 io.Int.Input("padding", default=32, min=0, max=2048,
                              tooltip="Context pixels added around the mask bounding box on every side."),
-                io.Int.Input("resolution", default=0, min=0, max=4096, step=8,
-                             tooltip="Scale the crop so its longest side is this many pixels, e.g. 1024 for SDXL. 0 keeps the crop at its original size."),
+                io.Float.Input("megapixels", default=1.0, min=0, max=16.0, step=0.01,
+                               tooltip="Scale the crop to this many megapixels, keeping aspect ratio. 0 keeps the crop at its original size."),
+                io.Int.Input("alignment", default=8, min=8, max=256, step=8,
+                             tooltip="Round the crop box and scaled size to this pixel step: 8 for SD/SDXL/Flux/Qwen-Image VAEs, 32 for Qwen-Image 2.1. Must match Masked Inpaint Paste."),
             ],
             outputs=[
                 io.Image.Output(display_name="image"),
@@ -54,18 +56,19 @@ class MaskedInpaintCrop(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, mask, padding, resolution) -> io.NodeOutput:
+    def execute(cls, image, mask, padding, megapixels, alignment=8) -> io.NodeOutput:
         mask = resize_mask(mask, image.shape[1], image.shape[2])
-        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2])
+        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2], alignment)
         crop = image[:, y0:y1, x0:x1, :]
         crop_mask = mask[:, y0:y1, x0:x1]
         height, width = crop.shape[1:3]
-        if resolution > 0 and max(height, width) != resolution:
-            scale = resolution / max(height, width)
-            width = max(round(width * scale / 8) * 8, 64)
-            height = max(round(height * scale / 8) * 8, 64)
-            crop = comfy.utils.common_upscale(crop.movedim(-1, 1), width, height, "lanczos", "disabled").movedim(1, -1)
-            crop_mask = resize_mask(crop_mask, height, width)
+        if megapixels > 0:
+            scale = math.sqrt(megapixels * 1024 * 1024 / (width * height))
+            width = max(round(width * scale / alignment) * alignment, alignment)
+            height = max(round(height * scale / alignment) * alignment, alignment)
+            if (height, width) != crop.shape[1:3]:
+                crop = comfy.utils.common_upscale(crop.movedim(-1, 1), width, height, "lanczos", "disabled").movedim(1, -1)
+                crop_mask = resize_mask(crop_mask, height, width)
         return io.NodeOutput(crop, crop_mask)
 
 
@@ -84,6 +87,8 @@ class MaskedInpaintPaste(io.ComfyNode):
                 io.Image.Input("inpainted"),
                 io.Int.Input("padding", default=32, min=0, max=2048,
                              tooltip="Must match the padding used in Masked Inpaint Crop."),
+                io.Int.Input("alignment", default=8, min=8, max=256, step=8,
+                             tooltip="Must match the alignment used in Masked Inpaint Crop."),
             ],
             outputs=[
                 io.Image.Output(),
@@ -91,10 +96,10 @@ class MaskedInpaintPaste(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, mask, inpainted, padding) -> io.NodeOutput:
+    def execute(cls, image, mask, inpainted, padding, alignment=8) -> io.NodeOutput:
         mask = resize_mask(mask, image.shape[1], image.shape[2])
         image, inpainted = node_helpers.image_alpha_fix(image, inpainted)
-        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2])
+        x0, y0, x1, y1 = masked_region_box(mask, padding, image.shape[1], image.shape[2], alignment)
         region = comfy.utils.common_upscale(inpainted.movedim(-1, 1), x1 - x0, y1 - y0, "lanczos", "disabled").movedim(1, -1)
         m = mask[:, y0:y1, x0:x1].unsqueeze(-1)
         out = image.clone()
