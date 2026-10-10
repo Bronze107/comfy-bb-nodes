@@ -13,6 +13,7 @@ from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
 from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
 from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, MaskedInpaintPaste
 from qwen_nodes import TextEncodeQwenImage21Latent
+from model_nodes import MultiLoraLoader
 
 
 class BBExtension(ComfyExtension):
@@ -30,6 +31,7 @@ class BBExtension(ComfyExtension):
             MaskedInpaintCrop,
             MaskedInpaintPaste,
             TextEncodeQwenImage21Latent,
+            MultiLoraLoader,
         ]
 
 
