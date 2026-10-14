@@ -8,6 +8,51 @@ import node_helpers
 from comfy_api.latest import io
 
 
+_QWEN21_SHIFT_BASE = 0.5  # scheduler mu anchors from the checkpoint config: 0.5 @ 256 tokens, 0.9 @ 8192 tokens
+_QWEN21_SHIFT_MAX = 0.9
+_QWEN21_SEQ_BASE = 256
+_QWEN21_SEQ_MAX = 8192
+
+
+class QwenImage21Sigmas(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="QwenImage21Sigmas",
+            display_name="Qwen Image 2.1 Sigmas",
+            category="model/sampling/sigmas",
+            description="Sigmas matching the diffusers Qwen-Image-2.1 scheduler: uniform base grid, "
+            "resolution-dependent exponential mu shift, last sigma stretched to shift_terminal (0 disables), "
+            "then the terminal 0. Width and height must match the latent image. Feed to SamplerCustom with euler; "
+            "no ModelSamplingFlux patch is needed.",
+            inputs=[
+                io.Int.Input("width", default=1024, min=16, max=16384, step=8,
+                             tooltip="Must match the latent image width; the token count drives the mu shift."),
+                io.Int.Input("height", default=1024, min=16, max=16384, step=8,
+                             tooltip="Must match the latent image height."),
+                io.Int.Input("steps", default=40, min=2, max=1000,
+                             tooltip="Denoising steps; the base grid is uniform over this many steps before shifting."),
+                io.Float.Input("shift_terminal", default=0.02, min=0.0, max=1.0, step=0.001,
+                               tooltip="Smallest sigma of the schedule after stretching, matching the checkpoint's shift_terminal. 0 disables the stretch."),
+            ],
+            outputs=[io.Sigmas.Output()],
+        )
+
+    @classmethod
+    def execute(cls, width, height, steps, shift_terminal) -> io.NodeOutput:
+        seq_len = width * height // 256  # one token per 16x16 pixels
+        m = (_QWEN21_SHIFT_MAX - _QWEN21_SHIFT_BASE) / (_QWEN21_SEQ_MAX - _QWEN21_SEQ_BASE)
+        mu = seq_len * m + (_QWEN21_SHIFT_BASE - m * _QWEN21_SEQ_BASE)
+        e_mu = math.exp(mu)
+        # base grid: np.linspace(1.0, 1/steps, steps), shifted by sigma = e_mu / (e_mu + (1/s - 1))
+        sigmas = [1.0 + (1.0 / steps - 1.0) * i / (steps - 1) for i in range(steps)]
+        sigmas = [e_mu / (e_mu + (1.0 / s - 1.0)) for s in sigmas]
+        if shift_terminal > 0.0:
+            scale = (1.0 - sigmas[-1]) / (1.0 - shift_terminal)
+            sigmas = [1.0 - (1.0 - s) / scale for s in sigmas]
+        return io.NodeOutput(torch.FloatTensor(sigmas + [0.0]))
+
+
 class TextEncodeQwenImage21Latent(io.ComfyNode):
     @classmethod
     def define_schema(cls):
