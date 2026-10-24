@@ -11,7 +11,9 @@ _impl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_impl)
 
 random_color = _impl.random_color
+box_metadata = _impl.box_metadata
 random_bboxes = _impl.random_bboxes
+boxes_from_rows = _impl.boxes_from_rows
 
 HEX = re.compile(r"^#[0-9A-F]{6}$")
 
@@ -118,3 +120,113 @@ def test_execute_empty_count():
     assert tuple(out[0].shape) == (1, 128, 256, 3)
     assert out[1] == [[]]
     assert out[2] == []
+
+
+def test_random_color_off_drops_palette():
+    for box in random_bboxes(10, 256, 256, 0.1, 0.5, 0, use_random_color=False):
+        assert box["metadata"]["palette"] == []
+
+
+def test_random_color_off_uses_color_palette():
+    boxes = random_bboxes(5, 256, 256, 0.1, 0.5, 0, use_random_color=False,
+                          color_palette=["#ff8800", "#00ff88"])
+    for box in boxes:
+        assert box["metadata"]["palette"] == ["#FF8800", "#00FF88"]
+
+
+def test_random_color_off_skips_color_palette_in_elements():
+    out = _impl.RandomBoundingBoxes.execute(
+        width=256, height=128, count=2, min_size=0.1, max_size=0.5, seed=0,
+        random_color=False,
+    )
+    for element in out[2]:
+        assert "color_palette" not in element
+
+
+def test_box_metadata_infers_type_from_text():
+    assert box_metadata()["type"] == "obj"
+    assert box_metadata(text="hi")["type"] == "text"
+    assert box_metadata(text="hi")["text"] == "hi"
+    assert box_metadata(desc="a ball")["desc"] == "a ball"
+    assert box_metadata(palette=["#FF8800"])["palette"] == ["#FF8800"]
+    assert box_metadata()["palette"] == []
+
+
+def test_boxes_from_rows_keeps_row_metadata():
+    rows = [
+        {"text": "hello", "desc": "a sign", "color_palette": ["#FF8800", "#00FF88"]},
+        {"text": "", "desc": "a ball", "color_palette": []},
+        {"text": "bye", "desc": "", "color_palette": []},
+    ]
+    boxes = boxes_from_rows(rows, 512, 512, 0.1, 0.5, 0)
+    assert len(boxes) == 3
+    assert boxes[0]["metadata"] == {
+        "type": "text", "text": "hello", "desc": "a sign",
+        "palette": ["#FF8800", "#00FF88"],
+    }
+    assert boxes[1]["metadata"]["type"] == "obj"
+    assert boxes[1]["metadata"]["desc"] == "a ball"
+    assert boxes[2]["metadata"]["type"] == "text"
+
+
+def test_boxes_from_rows_blank_palette_gets_a_random_color():
+    boxes = boxes_from_rows([{"text": "hi", "desc": "", "color_palette": []}], 256, 256, 0.1, 0.5, 0)
+    assert len(boxes[0]["metadata"]["palette"]) == 1
+    assert HEX.match(boxes[0]["metadata"]["palette"][0])
+
+
+def test_boxes_from_rows_normalizes_palette():
+    boxes = boxes_from_rows(
+        [{"text": "hi", "desc": "", "color_palette": ["#ff8800", "", "#00ff88"]}],
+        256, 256, 0.1, 0.5, 0,
+    )
+    assert boxes[0]["metadata"]["palette"] == ["#FF8800", "#00FF88"]
+
+
+def test_boxes_from_rows_skips_empty_rows():
+    rows = [
+        {"text": "", "desc": "", "color_palette": []},
+        {"text": None, "desc": None, "color_palette": None},
+        {"text": "hi", "desc": "", "color_palette": []},
+    ]
+    boxes = boxes_from_rows(rows, 256, 256, 0.1, 0.5, 0)
+    assert len(boxes) == 1
+    assert boxes[0]["metadata"]["text"] == "hi"
+
+
+def test_boxes_from_rows_empty_input():
+    assert boxes_from_rows([], 256, 256, 0.1, 0.5, 0) == []
+
+
+def test_advanced_execute_outputs():
+    rows = [
+        {"text": "hello", "desc": "a sign", "color_palette": ["#FF8800", "#00FF88"]},
+        {"text": "", "desc": "a ball", "color_palette": []},
+        {"text": "", "desc": "", "color_palette": []},
+    ]
+    out = _impl.RandomBoundingBoxesAdvanced.execute(
+        width=256, height=128, min_size=0.1, max_size=0.5, seed=0, boxes=rows
+    )
+    assert tuple(out[0].shape) == (1, 128, 256, 3)
+    assert out[1] == [boxes_from_rows(rows, 256, 128, 0.1, 0.5, 0)]
+    assert len(out[2]) == 2  # the empty row is skipped
+    assert out[2][0]["type"] == "text"
+    assert out[2][0]["text"] == "hello"
+    assert out[2][0]["desc"] == "a sign"
+    assert out[2][0]["color_palette"] == ["#FF8800", "#00FF88"]
+
+
+def test_advanced_execute_without_rows():
+    out = _impl.RandomBoundingBoxesAdvanced.execute(
+        width=256, height=128, min_size=0.1, max_size=0.5, seed=0
+    )
+    assert tuple(out[0].shape) == (1, 128, 256, 3)
+    assert out[1] == [[]]
+    assert out[2] == []
+
+
+def test_schemas_define():
+    for cls in (_impl.RandomBoundingBoxes, _impl.RandomBoundingBoxesAdvanced):
+        schema = cls.define_schema()
+        assert schema.inputs
+        assert schema.outputs
