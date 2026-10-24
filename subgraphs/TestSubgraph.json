@@ -1,0 +1,185 @@
+{
+    "revision": 0,
+    "last_node_id": "2",
+    "last_link_id": 0,
+    "nodes": [
+        {
+            "id": 2,
+            "type": "fdfb5b27-26ab-4735-bedf-c3f7d487677f",
+            "pos": [
+                4828.014967177244,
+                -1087.7799124726482
+            ],
+            "size": [
+                210,
+                88
+            ],
+            "flags": {},
+            "order": 0,
+            "mode": 0,
+            "inputs": [
+                {
+                    "name": "value",
+                    "type": "STRING",
+                    "widget": {
+                        "name": "value"
+                    },
+                    "link": null
+                }
+            ],
+            "outputs": [
+                {
+                    "name": "STRING",
+                    "type": "STRING",
+                    "links": null
+                }
+            ],
+            "title": "TestSubgraph",
+            "properties": {
+                "previewExposures": []
+            },
+            "widgets_values": [
+                ""
+            ],
+            "widgets_values_named": {
+                "value": ""
+            }
+        }
+    ],
+    "links": [],
+    "version": 0.4,
+    "definitions": {
+        "subgraphs": [
+            {
+                "id": "fdfb5b27-26ab-4735-bedf-c3f7d487677f",
+                "version": 1,
+                "state": {
+                    "lastGroupId": 0,
+                    "lastNodeId": 2,
+                    "lastLinkId": 2,
+                    "lastRerouteId": 0
+                },
+                "revision": 0,
+                "config": {},
+                "name": "TestSubgraph",
+                "inputNode": {
+                    "id": -10,
+                    "bounding": [
+                        4510.014967177244,
+                        -1113.7799124726482,
+                        128,
+                        68
+                    ]
+                },
+                "outputNode": {
+                    "id": -20,
+                    "bounding": [
+                        5158.014967177244,
+                        -1113.7799124726482,
+                        128,
+                        68
+                    ]
+                },
+                "inputs": [
+                    {
+                        "id": "516a43ab-008f-478e-86c1-245944e4d355",
+                        "name": "value",
+                        "type": "STRING",
+                        "linkIds": [
+                            1
+                        ],
+                        "pos": [
+                            4614.014967177244,
+                            -1089.7799124726482
+                        ]
+                    }
+                ],
+                "outputs": [
+                    {
+                        "id": "dd0ad3e6-c2ad-4d6c-b943-e99104beb2e2",
+                        "name": "STRING",
+                        "type": "STRING",
+                        "linkIds": [
+                            2
+                        ],
+                        "pos": [
+                            5182.014967177244,
+                            -1089.7799124726482
+                        ]
+                    }
+                ],
+                "widgets": [],
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "PrimitiveStringMultiline",
+                        "pos": [
+                            4698.014967177244,
+                            -1174.7799124726482
+                        ],
+                        "size": [
+                            400,
+                            200
+                        ],
+                        "flags": {},
+                        "order": 0,
+                        "mode": 0,
+                        "inputs": [
+                            {
+                                "localized_name": "value",
+                                "name": "value",
+                                "type": "STRING",
+                                "widget": {
+                                    "name": "value"
+                                },
+                                "link": 1
+                            }
+                        ],
+                        "outputs": [
+                            {
+                                "localized_name": "STRING",
+                                "name": "STRING",
+                                "type": "STRING",
+                                "links": [
+                                    2
+                                ]
+                            }
+                        ],
+                        "properties": {
+                            "Node name for S&R": "PrimitiveStringMultiline"
+                        },
+                        "widgets_values": [
+                            ""
+                        ],
+                        "widgets_values_named": {
+                            "value": ""
+                        }
+                    }
+                ],
+                "groups": [],
+                "links": [
+                    {
+                        "id": 1,
+                        "origin_id": -10,
+                        "origin_slot": 0,
+                        "target_id": 1,
+                        "target_slot": 0,
+                        "type": "STRING"
+                    },
+                    {
+                        "id": 2,
+                        "origin_id": 1,
+                        "origin_slot": 0,
+                        "target_id": -20,
+                        "target_slot": 0,
+                        "type": "STRING"
+                    }
+                ],
+                "extra": {},
+                "category": "bb/Test Subgraph",
+                "description": "Just a placeholder."
+            }
+        ]
+    },
+    "extra": {}
+}
