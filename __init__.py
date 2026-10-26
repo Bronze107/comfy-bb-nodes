@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
 from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
 from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, MaskedInpaintPaste
-from bbox_nodes import RandomBoundingBoxes, RandomBoundingBoxesAdvanced
+from bbox_nodes import DescribeBoundingBoxes, RandomBoundingBoxes, RandomBoundingBoxesAdvanced
 from qwen_nodes import QwenImage21Sigmas, TextEncodeQwenImage21Latent
 from model_nodes import MultiLoraLoader
 
@@ -33,6 +33,7 @@ class BBExtension(ComfyExtension):
             MaskedInpaintPaste,
             RandomBoundingBoxes,
             RandomBoundingBoxesAdvanced,
+            DescribeBoundingBoxes,
             TextEncodeQwenImage21Latent,
             QwenImage21Sigmas,
             MultiLoraLoader,

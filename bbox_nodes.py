@@ -68,6 +68,32 @@ def render_boxes(boxes, width, height):
     )
 
 
+def describe_box(box):
+    if not isinstance(box, dict):
+        return box
+    meta = box.get("metadata")
+    meta = dict(meta) if isinstance(meta, dict) else box_metadata()
+    label = box.get("label")
+    if label and not meta.get("desc"):
+        meta["desc"] = str(label)
+    out = dict(box)
+    out["metadata"] = meta
+    return out
+
+
+def describe_boxes(bboxes):
+    # Same shapes detection nodes emit: dict, list[dict], or list[list[dict]] per frame.
+    if isinstance(bboxes, dict):
+        return describe_box(bboxes)
+    if isinstance(bboxes, list):
+        if not bboxes:
+            return []
+        if isinstance(bboxes[0], list):
+            return [describe_boxes(frame) for frame in bboxes]
+        return [describe_box(box) for box in bboxes]
+    return bboxes
+
+
 class RandomBoundingBoxes(io.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -180,3 +206,31 @@ class RandomBoundingBoxesAdvanced(io.ComfyNode):
     def execute(cls, width, height, min_size, max_size, seed, boxes=None):
         rows = boxes or []
         return render_boxes(boxes_from_rows(rows, width, height, min_size, max_size, seed), width, height)
+
+
+class DescribeBoundingBoxes(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="DescribeBoundingBoxes",
+            display_name="Describe Bounding Boxes",
+            category="utilities",
+            search_aliases=["bbox", "bounding box", "detection", "label", "description", "rt_detr"],
+            description="Copy detection labels into each box's metadata description so Create "
+                        "Bounding Boxes shows them in the canvas. Boxes that already carry a "
+                        "description keep it.",
+            inputs=[
+                io.BoundingBox.Input("bboxes", force_input=True,
+                                     tooltip="Detection boxes from RT-DETR, SAM3, MediaPipe or any "
+                                             "other source, in pixel space."),
+            ],
+            outputs=[
+                io.BoundingBox.Output(display_name="bboxes",
+                                      tooltip="Same boxes with metadata.desc filled from the "
+                                              "detection labels. Plug into Create Bounding Boxes."),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, bboxes) -> io.NodeOutput:
+        return io.NodeOutput(describe_boxes(bboxes))
