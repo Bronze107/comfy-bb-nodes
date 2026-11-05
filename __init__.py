@@ -15,6 +15,9 @@ from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, Mas
 from bbox_nodes import DescribeBoundingBoxes, RandomBoundingBoxes, RandomBoundingBoxesAdvanced
 from qwen_nodes import QwenImage21Sigmas, TextEncodeQwenImage21Latent
 from model_nodes import MultiLoraLoader
+from sampling_nodes import register_samplers
+
+register_samplers()
 
 
 class BBExtension(ComfyExtension):
