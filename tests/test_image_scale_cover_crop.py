@@ -12,8 +12,8 @@ _spec.loader.exec_module(_impl)
 ScaleImageToTotalPixelsCoverCrop = _impl.ScaleImageToTotalPixelsCoverCrop
 
 
-def run(image, megapixels=1.0, steps=1, method="bilinear"):
-    return ScaleImageToTotalPixelsCoverCrop.execute(image, method, megapixels, steps)[0]
+def run(image, megapixels=1.0, steps=1, method="bilinear", only_downscale=False):
+    return ScaleImageToTotalPixelsCoverCrop.execute(image, method, megapixels, steps, only_downscale)[0]
 
 
 def test_output_shape_step_aligned():
@@ -54,3 +54,29 @@ def test_center_crop_trims_edges_symmetrically():
     assert out[0, 0, 0, 0].item() + out[0, -1, 0, 0].item() == pytest.approx(1.0, abs=0.01)
     assert out[0, 383, 0, 0].item() == pytest.approx(0.5, abs=0.01)
     assert out[0, 384, 0, 0].item() == pytest.approx(0.5, abs=0.01)
+
+
+def test_only_downscale_keeps_small_image_size_aligned():
+    image = torch.rand(1, 512, 768, 3)  # 0.39 MP, below the 1 MP target, divisible by 8
+    out = run(image, megapixels=1.0, steps=8, only_downscale=True)
+    assert out.shape == image.shape
+    assert torch.equal(out, image)
+
+
+def test_only_downscale_aligns_without_upscaling():
+    image = torch.rand(1, 500, 500, 3)  # below target; aligned size must not exceed the input
+    out = run(image, megapixels=1.0, steps=8, only_downscale=True)
+    assert out.shape[1] <= 500 and out.shape[2] <= 500
+    assert out.shape[1] % 8 == 0 and out.shape[2] % 8 == 0
+
+
+def test_only_downscale_still_downscales_large_image():
+    image = torch.rand(1, 1080, 1920, 3)
+    out = run(image, megapixels=1.0, steps=8, only_downscale=True)
+    assert out.shape == (1, 768, 1368, 3)
+
+
+def test_only_downscale_off_still_upscales():
+    image = torch.rand(1, 512, 768, 3)
+    out = run(image, megapixels=1.0, steps=8)
+    assert out.shape[1] * out.shape[2] > 512 * 768

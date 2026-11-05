@@ -123,6 +123,9 @@ class ScaleImageToTotalPixelsCoverCrop(io.ComfyNode):
                 io.Combo.Input("upscale_method", options=cls.upscale_methods),
                 io.Float.Input("megapixels", default=1.0, min=0.01, max=16.0, step=0.01),
                 io.Int.Input("resolution_steps", default=1, min=1, max=256, advanced=True),
+                io.Boolean.Input("only_downscale", default=False,
+                                 tooltip="Cap the scale at 1: images below the target megapixels keep their size "
+                                 "(still step-aligned and center-cropped) instead of being upscaled."),
             ],
             outputs=[
                 io.Image.Output(),
@@ -130,11 +133,13 @@ class ScaleImageToTotalPixelsCoverCrop(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image, upscale_method, megapixels, resolution_steps) -> io.NodeOutput:
+    def execute(cls, image, upscale_method, megapixels, resolution_steps, only_downscale=False) -> io.NodeOutput:
         height, width = image.shape[-3:-1]
         total = megapixels * 1024 * 1024
 
         scale_by = math.sqrt(total / (width * height))
+        if only_downscale:
+            scale_by = min(scale_by, 1.0)
         out_w = max(round(width * scale_by / resolution_steps) * resolution_steps, resolution_steps)
         out_h = max(round(height * scale_by / resolution_steps) * resolution_steps, resolution_steps)
 
