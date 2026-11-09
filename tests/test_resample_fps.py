@@ -65,6 +65,25 @@ def test_resize_keeps_source_fps(tmp_path, monkeypatch):
     assert out.get_frame_count() == pytest.approx(30, abs=2)
 
 
+def test_resize_steps_align(tmp_path, monkeypatch):
+    monkeypatch.setattr(_impl, "get_output_directory", lambda: str(tmp_path))
+    video = make_resizable_video()
+    result = ResampleFPS.execute(video, 0.0, 0.02, "test_resize", "fit", 32)
+    out = result[0]
+    w, h = out.get_dimensions()
+    assert w % 32 == 0 and h % 32 == 0
+
+
+def test_resize_cover_upscales_to_exact_target(tmp_path, monkeypatch):
+    # fit never upscales and keeps the source size; cover fills the aligned
+    # target even when that means upscaling.
+    monkeypatch.setattr(_impl, "get_output_directory", lambda: str(tmp_path))
+    video = make_resizable_video()
+    result = ResampleFPS.execute(video, 0.0, 0.2, "test_resize", "cover", 2)
+    out = result[0]
+    assert out.get_dimensions() == (596, 336)
+
+
 def test_no_transform_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(_impl, "get_output_directory", lambda: str(tmp_path))
     video = make_resizable_video()

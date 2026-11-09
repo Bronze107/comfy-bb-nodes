@@ -258,7 +258,7 @@ class ResampleFPS(io.ComfyNode):
             display_name="Resample Video",
             category="video",
             search_aliases=["adjust fps", "change frame rate", "convert fps", "set fps", "resize", "scale resolution", "adjust resolution"],
-            description="Re-encode a video to a new frame rate and/or scale it to a target megapixel count. fps 0 keeps the source frame rate; megapixels 0 keeps the source resolution. Scaling preserves aspect ratio and never upscales.",
+            description="Re-encode a video to a new frame rate and/or scale it to a target megapixel count. fps 0 keeps the source frame rate; megapixels 0 keeps the source resolution. fit preserves aspect ratio and never upscales; cover scales to fill the target size and center-crops the overflow.",
             is_output_node=True,
             inputs=[
                 io.Video.Input("video", tooltip="The video to resample or resize."),
@@ -274,8 +274,22 @@ class ResampleFPS(io.ComfyNode):
                     "megapixels",
                     default=2.0,
                     min=0.0,
-                    step=0.1,
-                    tooltip="Target size in megapixels, or 0 to keep the source resolution. Aspect ratio is preserved and the video is never upscaled.",
+                    step=0.01,
+                    tooltip="Target size in megapixels, or 0 to keep the source resolution.",
+                ),
+                io.Combo.Input(
+                    "crop",
+                    options=["fit", "cover"],
+                    default="fit",
+                    tooltip="fit: preserve aspect ratio and never upscale. cover: scale to fill the target size (may upscale) and center-crop the overflow.",
+                ),
+                io.Int.Input(
+                    "resolution_steps",
+                    default=2,
+                    min=1,
+                    max=256,
+                    advanced=True,
+                    tooltip="Output width and height are rounded to a multiple of this many pixels. Odd values are rounded up to the next even step for yuv420p output.",
                 ),
                 io.String.Input(
                     "filename_prefix",
@@ -289,7 +303,7 @@ class ResampleFPS(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, video, fps, megapixels, filename_prefix):
+    def execute(cls, video, fps, megapixels, filename_prefix, crop="fit", resolution_steps=2):
         temp_dir = get_temp_directory()
         path, is_temp = _materialize_video(video, temp_dir)
         temp_paths = [path] if is_temp else []
@@ -305,10 +319,15 @@ class ResampleFPS(io.ComfyNode):
                 height = ref_video.get("height")
                 if not width or not height:
                     raise RuntimeError("Could not determine the source video's dimensions.")
+                steps = max(resolution_steps - resolution_steps % 2, 2)
                 factor = math.sqrt((megapixels * 1_000_000) / (width * height))
-                if factor < 1.0:
-                    new_w = round(width * factor) - (round(width * factor) % 2)
-                    new_h = round(height * factor) - (round(height * factor) % 2)
+                if crop == "cover":
+                    out_w = max(round(width * factor / steps) * steps, steps)
+                    out_h = max(round(height * factor / steps) * steps, steps)
+                    vf.append(f"scale={out_w}:{out_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={out_w}:{out_h}")
+                elif factor < 1.0:
+                    new_w = max(round(width * factor / steps) * steps, steps)
+                    new_h = max(round(height * factor / steps) * steps, steps)
                     vf.append(f"scale={new_w}:{new_h}:flags=lanczos")
             out_path, file, subfolder = _output_path(filename_prefix, ref_video)
             cmd = [
