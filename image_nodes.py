@@ -1,8 +1,10 @@
 import math
+import os
 
 import torch
 
 import comfy.utils
+import folder_paths
 import node_helpers
 from comfy_api.latest import io
 
@@ -492,3 +494,100 @@ class ScaleImageToTotalPixelsCoverCrop(io.ComfyNode):
         y0 = (scaled_h - out_h) // 2
         s = s[..., y0:y0 + out_h, x0:x0 + out_w]
         return io.NodeOutput(s.movedim(1, -1))
+
+
+LUTS_DIR = os.path.join(folder_paths.models_dir, "luts")
+os.makedirs(LUTS_DIR, exist_ok=True)
+folder_paths.add_model_folder_path("luts", LUTS_DIR)
+folder_paths.folder_names_and_paths["luts"][1].add(".cube")
+
+
+def parse_cube(text):
+    size_3d = size_1d = None
+    domain_min = torch.zeros(3)
+    domain_max = torch.ones(3)
+    rows = []
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts or parts[0].startswith("#"):
+            continue
+        if parts[0] == "LUT_3D_SIZE":
+            size_3d = int(parts[1])
+        elif parts[0] == "LUT_1D_SIZE":
+            size_1d = int(parts[1])
+        elif parts[0] in ("TITLE", "VERSION", "FORMAT"):
+            continue
+        elif parts[0] == "DOMAIN_MIN":
+            domain_min = torch.tensor([float(v) for v in parts[1:4]])
+        elif parts[0] == "DOMAIN_MAX":
+            domain_max = torch.tensor([float(v) for v in parts[1:4]])
+        elif len(parts) == 3:
+            rows.append([float(v) for v in parts])
+    size = size_3d if size_3d is not None else size_1d
+    if size is None:
+        raise ValueError("Not a .cube LUT: missing LUT_3D_SIZE or LUT_1D_SIZE")
+    expected = size ** 3 if size_3d is not None else size
+    if len(rows) != expected:
+        raise ValueError(f"Expected {expected} LUT entries, found {len(rows)}")
+    lut = torch.tensor(rows)
+    if size_3d is not None:
+        # rows vary red fastest, so the reshape order is blue, green, red
+        return lut.reshape(size_3d, size_3d, size_3d, 3), domain_min, domain_max
+    return lut.reshape(size_1d, 3), domain_min, domain_max
+
+
+def apply_lut(image, lut, domain_min, domain_max, strength):
+    if strength == 0.0:
+        return image
+    alpha = image[..., 3:]
+    rgb = image[..., :3]
+    coords = ((rgb - domain_min.to(rgb)) / (domain_max - domain_min).to(rgb)).clamp(0.0, 1.0)
+    if lut.dim() == 4:
+        # align_corners=True maps 0/1 onto the first/last node, so a pixel reads its
+        # trilinear blend straight off the (blue, green, red) grid; the dummy depth
+        # step of the grid turns the volumetric sampler into a per-pixel lookup
+        volume = lut.permute(3, 0, 1, 2).unsqueeze(0).expand(rgb.shape[0], -1, -1, -1, -1)
+        grid = (coords * 2.0 - 1.0).unsqueeze(1)
+        graded = torch.nn.functional.grid_sample(volume, grid, mode="bilinear",
+                                                 padding_mode="border", align_corners=True).movedim(1, -1).squeeze(1)
+    else:
+        # 1D LUTs map every channel through its own column of the table; lut[low]
+        # gathers whole rows, so select the c-th entry of row low[..., c]
+        n = lut.shape[0]
+        pos = coords * (n - 1)
+        low = pos.floor().long().clamp(max=n - 1)
+        high = (low + 1).clamp(max=n - 1)
+        frac = pos - low.float()
+        low_val = lut[low].gather(3, low.unsqueeze(3)).squeeze(3)
+        high_val = lut[high].gather(3, high.unsqueeze(3)).squeeze(3)
+        graded = low_val + (high_val - low_val) * frac
+    return torch.cat([rgb + (graded.clamp(0.0, 1.0) - rgb) * strength, alpha], dim=-1)
+
+
+class ApplyLut(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="ApplyLut",
+            display_name="Apply LUT",
+            category="image/filters",
+            description="Color grade an image with a .cube LUT from models/luts. 3D LUTs are trilinearly "
+            "interpolated, 1D LUTs apply per channel. Strength blends the graded color over the original, "
+            "so heavy film LUTs usually sit best between 0.4 and 0.7.",
+            inputs=[
+                io.Image.Input("image"),
+                io.Combo.Input("lut", options=folder_paths.get_filename_list("luts"),
+                               tooltip=".cube files in ComfyUI/models/luts."),
+                io.Float.Input("strength", default=1.0, min=0.0, max=1.0, step=0.01,
+                               tooltip="0 keeps the original image, 1 applies the LUT fully."),
+            ],
+            outputs=[
+                io.Image.Output(),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, image, lut, strength):
+        path = folder_paths.get_full_path_or_raise("luts", lut)
+        with open(path, encoding="utf-8-sig") as f:
+            return io.NodeOutput(apply_lut(image, *parse_cube(f.read()), strength))

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from text_nodes import LoadWildcardFile, RandomFromList, WildcardReplace
 from video_nodes import VideoInfo, ConcatVideos, ResampleFPS, SplitVideoByFrames
-from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, MaskedInpaintPaste, IPhone5Camera, RicohGR3HDF, CCTVBodycam, KodakC713
+from image_nodes import ScaleImageToTotalPixelsCoverCrop, MaskedInpaintCrop, MaskedInpaintPaste, IPhone5Camera, RicohGR3HDF, CCTVBodycam, KodakC713, ApplyLut
 from bbox_nodes import DescribeBoundingBoxes, RandomBoundingBoxes, RandomBoundingBoxesAdvanced
 from qwen_nodes import QwenImage21Sigmas, TextEncodeQwenImage21Latent
 from model_nodes import MultiLoraLoader
@@ -38,6 +38,7 @@ class BBExtension(ComfyExtension):
             RicohGR3HDF,
             CCTVBodycam,
             KodakC713,
+            ApplyLut,
             RandomBoundingBoxes,
             RandomBoundingBoxesAdvanced,
             DescribeBoundingBoxes,
