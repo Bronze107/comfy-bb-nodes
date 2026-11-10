@@ -151,6 +151,84 @@ class RicohGR3HDF(io.ComfyNode):
                                            mist_strength, contrast, saturation, vignette, grain_strength))
 
 
+class KodakC713(io.ComfyNode):
+    @classmethod
+    def define_schema(cls):
+        return io.Schema(
+            node_id="KodakC713",
+            display_name="Kodak EasyShare C713",
+            category="image/filters",
+            description="Simulate the 2007 Kodak EasyShare C713 compact CCD look behind the digicam "
+            "revival aesthetic: 7 MP resolution cap, soft cheap-lens rendering, direct-flash falloff "
+            "with blown center and sinking edges, halation glow on overexposed skin, Kodak's warm "
+            "saturated color science, colored CCD speckle in shadows, and mild corner falloff.",
+            inputs=[
+                io.Image.Input("image"),
+                io.Int.Input("seed", default=0, min=0, max=0xFFFFFFFFFFFFFFFF, control_after_generate=True,
+                             tooltip="Seed for the CCD noise."),
+                io.Float.Input("softness", default=0.25, min=0.0, max=1.0, step=0.01,
+                               tooltip="Blend toward a slight blur; the tiny zoom lens is never sharp."),
+                io.Float.Input("flash", default=0.35, min=0.0, max=1.0, step=0.01,
+                               tooltip="Direct flash falloff: center brightens and blows out, edges sink "
+                               "toward black like a night snapshot."),
+                io.Float.Input("glow_strength", default=0.35, min=0.0, max=1.0, step=0.01,
+                               tooltip="Halation bloom on flash-overexposed highlights."),
+                io.Int.Input("glow_radius", default=12, min=0, max=256,
+                             tooltip="Bloom spread in pixels; 0 disables it."),
+                io.Float.Input("warmth", default=0.06, min=0.0, max=0.3, step=0.01,
+                               tooltip="Kodak's warm color science, stronger indoors."),
+                io.Float.Input("saturation", default=1.08, min=0.5, max=1.5, step=0.01,
+                               tooltip="Kodak color science renders punchy, saturated color."),
+                io.Float.Input("noise_strength", default=0.03, min=0.0, max=0.2, step=0.005,
+                               tooltip="Colored CCD speckle, visible in night shadows."),
+                io.Float.Input("vignette", default=0.08, min=0.0, max=0.5, step=0.01,
+                               tooltip="Corner falloff of the cheap zoom lens."),
+                io.Boolean.Input("resolution_cap", default=True,
+                                 tooltip="Downscale images larger than 3072x2304 (7 MP) like the original sensor."),
+            ],
+            outputs=[
+                io.Image.Output(),
+            ],
+        )
+
+    @classmethod
+    def execute(cls, image, seed, softness, flash, glow_strength, glow_radius, warmth, saturation,
+                noise_strength, vignette, resolution_cap=True) -> io.NodeOutput:
+        return io.NodeOutput(kodak_c713(image, seed, softness, flash, glow_strength, glow_radius,
+                                        warmth, saturation, noise_strength, vignette, resolution_cap))
+
+
+def kodak_c713(image, seed, softness, flash, glow_strength, glow_radius, warmth, saturation,
+               noise_strength, vignette, resolution_cap):
+    height, width = image.shape[1:3]
+    if resolution_cap and height * width > 3072 * 2304:
+        scale = math.sqrt(3072 * 2304 / (height * width))
+        width = max(round(width * scale), 1)
+        height = max(round(height * scale), 1)
+        image = comfy.utils.common_upscale(image.movedim(-1, 1), width, height, "area", "disabled").movedim(1, -1)
+    rgb, alpha = image[..., :3], image[..., 3:]
+    corner2 = radial_falloff(height, width, rgb.device).unsqueeze(-1)
+    rgb = rgb * (1.0 - vignette * corner2)
+    if flash > 0:
+        # direct flash: overexposed center, falloff into a sinking night background
+        rgb = rgb * (1.0 + flash * (0.5 - 0.75 * corner2))
+    if softness > 0:
+        blur = torch.nn.functional.avg_pool2d(rgb.movedim(-1, 1), 3, stride=1, padding=1, count_include_pad=False).movedim(1, -1)
+        rgb = rgb + (blur - rgb) * softness
+    if glow_radius > 0 and glow_strength > 0:
+        rgb = highlight_glow(rgb, 0.7, glow_radius, glow_strength)
+    rgb = rgb * torch.tensor([1.0 + warmth, 1.0, 1.0 - warmth * 0.6], device=rgb.device)
+    if saturation != 1.0:
+        lum = (rgb * torch.tensor([0.2126, 0.7152, 0.0722], device=rgb.device)).sum(dim=-1, keepdim=True)
+        rgb = lum + (rgb - lum) * saturation
+    if noise_strength > 0:
+        # CCD speckle is colored: independent noise per channel
+        generator = torch.manual_seed(seed)
+        noise = torch.randn(rgb.shape, generator=generator, device="cpu").to(rgb)
+        rgb = rgb + noise * noise_strength
+    return torch.cat([rgb.clamp(0.0, 1.0), alpha], dim=-1)
+
+
 class CCTVBodycam(io.ComfyNode):
     cast_factors = {"green": [-0.06, 0.08, -0.10], "magenta": [0.07, -0.08, 0.07], "amber": [0.08, 0.02, -0.20]}
 
@@ -301,16 +379,20 @@ def bloom(rgb, radius):
     return torch.nn.functional.interpolate(small, size=(height, width), mode="bilinear").movedim(1, -1)
 
 
+def highlight_glow(rgb, threshold, radius, strength):
+    # highlight diffusion: light above the threshold blooms outward, screen-blended
+    lum = (rgb * torch.tensor([0.2126, 0.7152, 0.0722], device=rgb.device)).sum(dim=-1, keepdim=True)
+    mask = ((lum - threshold) / (1.0 - threshold)).clamp(0.0, 1.0).square()
+    glow = bloom(rgb * mask, radius) * strength
+    return 1.0 - (1.0 - rgb) * (1.0 - glow)
+
+
 def ricoh_gr3_hdf(image, seed, glow_strength, glow_threshold, glow_radius, mist_strength, contrast,
                   saturation, vignette, grain_strength):
     height, width = image.shape[1:3]
     rgb, alpha = image[..., :3], image[..., 3:]
     if glow_radius > 0 and glow_strength > 0:
-        # highlight diffusion: light above the threshold blooms outward, screen-blended
-        lum = (rgb * torch.tensor([0.2126, 0.7152, 0.0722], device=rgb.device)).sum(dim=-1, keepdim=True)
-        mask = ((lum - glow_threshold) / (1.0 - glow_threshold)).clamp(0.0, 1.0).square()
-        glow = bloom(rgb * mask, glow_radius) * glow_strength
-        rgb = 1.0 - (1.0 - rgb) * (1.0 - glow)
+        rgb = highlight_glow(rgb, glow_threshold, glow_radius, glow_strength)
     if mist_strength > 0:
         # black-mist veiling: scattered light lifts the whole tonal range
         veil = bloom(rgb, max(glow_radius * 2, 32)) * mist_strength
